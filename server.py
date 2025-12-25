@@ -1,14 +1,27 @@
 from mcp.server.fastmcp import FastMCP
 from starlette.middleware.cors import CORSMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse, PlainTextResponse
 import uvicorn
 import httpx
 import os
 
 # Initialize FastMCP server
-# We set the host to 0.0.0.0 to make it accessible externally
-# Render sets the PORT environment variable, so we need to use it.
+# Render/Cloud Run set the PORT environment variable.
 port = int(os.environ.get("PORT", 8000))
 mcp = FastMCP("healthco-mcp", host="0.0.0.0", port=port)
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check(_: Request) -> JSONResponse:
+    return JSONResponse({"status": "ok", "name": mcp.name})
+
+
+@mcp.custom_route("/", methods=["GET"])
+async def index(_: Request) -> PlainTextResponse:
+    return PlainTextResponse(
+        "MCP server is running. Streamable HTTP endpoint: /mcp"
+    )
 
 @mcp.tool()
 async def create_patient(name: str, phone: str, secretKey: str, email: str = None, dateOfBirth: str = None) -> str:
@@ -45,22 +58,38 @@ async def create_patient(name: str, phone: str, secretKey: str, email: str = Non
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "stdio":
+    arg_transport = sys.argv[1].lower() if len(sys.argv) > 1 else None
+
+    # Modes:
+    # - stdio: local VS Code MCP (spawned process)
+    # - streamable-http: remote deployments (endpoint at /mcp)
+    if arg_transport == "stdio":
         mcp.run(transport="stdio")
-    else:
-        # Run the server using SSE transport
-        print(f"Starting MCP server on http://0.0.0.0:{port}")
-        
-        # Get the underlying Starlette app
-        app = mcp.sse_app()
-        
-        # Add CORS middleware to allow Retell AI (and others) to connect
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=["*"],
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
-        
-        uvicorn.run(app, host="0.0.0.0", port=port)
+        raise SystemExit(0)
+
+    # Always serve MCP over Streamable HTTP for deployments.
+    # Endpoint is /mcp (FastMCP default).
+    app = mcp.streamable_http_app()
+
+    # CORS is mainly relevant for browser-based clients.
+    # If you truly need credentialed requests, set MCP_CORS_ORIGINS to a comma-separated allowlist.
+    cors_origins = os.environ.get("MCP_CORS_ORIGINS", "*")
+    allow_origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
+    allow_credentials = os.environ.get("MCP_CORS_ALLOW_CREDENTIALS", "false").lower() == "true"
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allow_origins,
+        allow_credentials=allow_credentials,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    print(f"Starting MCP server on http://0.0.0.0:{port} (streamable-http)")
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=port,
+        proxy_headers=True,
+        forwarded_allow_ips="*",
+    )
