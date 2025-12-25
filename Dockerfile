@@ -2,15 +2,15 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copy requirements first to leverage Docker cache
+# Copy requirements first (Docker cache optimization)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application
+# Copy application code
 COPY server.py .
 
-# Render sets the PORT environment variable
-ENV PORT=8000
+# ❌ Do NOT hardcode PORT
+# Cloud Run will inject PORT automatically
 
-# Run the server
+# Start the server
 CMD ["python", "server.py"]
