@@ -1,4 +1,6 @@
 from mcp.server.fastmcp import FastMCP
+from starlette.middleware.cors import CORSMiddleware
+import uvicorn
 import httpx
 import os
 
@@ -48,4 +50,17 @@ if __name__ == "__main__":
     else:
         # Run the server using SSE transport
         print(f"Starting MCP server on http://0.0.0.0:{port}")
-        mcp.run(transport="sse")
+        
+        # Get the underlying Starlette app
+        app = mcp.sse_app()
+        
+        # Add CORS middleware to allow Retell AI (and others) to connect
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+        
+        uvicorn.run(app, host="0.0.0.0", port=port)
